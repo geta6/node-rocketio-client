@@ -1,34 +1,38 @@
+util = require 'util'
 events = require 'events'
 request = require 'request'
+WebSocket = require 'ws' # これは共有してもよい
 
 class RocketIO extends events.EventEmitter
-  constructor: (url, opts={type: 'websocket'})->
+  constructor: (@url, opts = {type: 'websocket'}) ->
+    # ()と->の間はあける、=は両端にspaceがあるのが望ましい
+    # 引数@urlでRocketIO::urlにバインドされる
     @type = opts.type
     @config = {}
-    @url = url
 
   connect: =>
-    request "#{@url}/rocketio/settings", (err,res,body)=>
-      return if err or res.statusCode != 200
-      @config = JSON.parse body
+    request "#{@url}/rocketio/settings", (err, res, body) => # space
+      return if err or res.statusCode isnt 200 # isやisntを使う、!=は!==に変換されるので明示した方がいい
+      try
+        @config = JSON.parse body # JSON.parseは文法エラーで必ず落ちる、try catchでくくったほうが吉
+      catch e
+        console.error e
       @io = switch @type
-            when 'websocket'
-              new WebSocketIO(@)
-            when 'comet'
-              new CometIO(@)
+        # 1行が79文字以内であれば短くした方が吉
+        when 'websocket' then new WebSocketIO(@)
+        when 'comet' then new CometIO(@)
       @io.on 'connect', =>
         @emit 'connect', @
       @io.on 'disconnect', =>
         @emit 'disconnect', @
     return @
 
-  push: (type, data)=>
+  push: (type, data) => # space
     @io.push type, data
 
 class WebSocketIO extends events.EventEmitter
-  WebSocket = require 'ws'
 
-  constructor: (rocketio)->
+  constructor: (rocketio) -> # space
     @rocketio = rocketio
     @connecting = false
     @on 'disconnect', =>
@@ -38,68 +42,72 @@ class WebSocketIO extends events.EventEmitter
     @connect()
 
   connect: ->
-    @ws = new WebSocket @rocketio.config.websocket
+    @ws = new WebSocket @rocketio.config?.websocket # 存在確認演算子は中途で使用可能(constructorのJSON.parse失敗時)
     @ws.on 'error', (err)=>
-      @connecting = false
+      @connecting = no # geta6のポリシー、switch系にはon/offを用いそれ以外にはyes/noを用いる
       @emit 'disconnect'
     @ws.on 'close', =>
-      @connecting = false
+      @connecting = no
       @emit 'disconnect'
     @ws.on 'open', =>
-      @connecting = true
+      @connecting = yes
       @emit 'connect'
-    @ws.on 'message', (data,flags)=>
-      data = JSON.parse data
-      @rocketio.emit data.type, data.data
+    @ws.on 'message', (data, flags) => # space
+      try
+        data = JSON.parse data
+      catch e
+        console.error e
+      @rocketio.emit data?.type, data?.data
 
-  push: (type, data)->
+  push: (type, data) -> # space
     return unless @connecting
-    @ws.send JSON.stringify({type: type, data: data})
+    @ws.send JSON.stringify { type: type, data: data } # ()いらないのとspace
 
 class CometIO extends events.EventEmitter
-  constructor: (rocketio)->
+  # classメソッドは必ず一行あける
+
+  constructor: (rocketio) -> # space
     @rocketio = rocketio
     @post_queue = []
-    @on '__session_id', (id)=>
+    @on '__session_id', (id) => # space
       @session_id = id
       @emit 'connect'
     @get()
-    setInterval =>
-      @flush()
-    , 1000
+    setInterval @flush, 1000 # これでいい
 
-  get: ->
+  get: =>
     url = switch typeof @session_id
-          when 'string'
-            @rocketio.config.comet+"?session=#{@session_id}"
-          else
-            @rocketio.config.comet
-    request url, (err,res,body)=>
-      if err or res.statusCode != 200
-        setTimeout =>
-          @get()
-        , 10000
+      when 'string' # indentはコンテクストに依存して書く
+        "#{@rocketio.config.comet}?session=#{@session_id}" # 返り値を期待する場合はこう書いた方が伝わりやすい
+      else
+        @rocketio.config.comet
+    request url, (err, res, body) =>
+      if err or res.statusCode isnt 200 # != -> isnt
+        setTimeout @get, 10000 # binded
         return
-      data_arr = JSON.parse body
+      try
+        data_arr = JSON.parse body
+      catch e
+        console.error e
       return unless data_arr instanceof Array
-      setTimeout =>
-        @get()
-      , 10
+      setTimeout @get, 10 # binded
       for data in data_arr
         @emit data.type, data.data
         @rocketio.emit data.type, data.data
 
-  push: (type, data)->
+  push: (type, data) -> # space
     return unless @session_id
-    @post_queue.push {type:type, data:data}
+    @post_queue.push { type: type, data: data } # data
 
-  flush: ->
+  flush: => # setIntervalで用いるので=>で拘束する
     return if @post_queue.length < 1
-    post_data = {
-      json: JSON.stringify({session: @session_id, events: @post_queue})
-    }
-    request.post {url: @rocketio.config.comet, form: post_data}, (err,res,body)=>
-      return if err or res.statusCode != 200
+    post_data = # {}いらない
+      json: JSON.stringify { session: @session_id, events: @post_queue } # ()いらない
+    request.post # 長いのでこうする
+      url: @rocketio.config.comet
+      form: post_data
+    , (err, res, body) =>
+      return if err or res.statusCode isnt 200 # 明示
       @post_queue = []
 
-module.exports = RocketIO
+exports = module.exports = RocketIO # exports = をつけたほうが親切、module自身がRocketIOオブジェクトになれる
